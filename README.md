@@ -1,4 +1,4 @@
-Practical Machine Learning Project - Quantified Self Data Analysis  
+Practical Machine Learning Project  
 ==================================================================
 
 ### Assignment  
