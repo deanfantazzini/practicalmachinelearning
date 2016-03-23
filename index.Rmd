@@ -1,0 +1,176 @@
+---
+title: "Prediction Assignment Writeup"
+author: "Dean Fantazzini"
+date: "22 March 2016"
+output:
+  html_document:
+    keep_md: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The main goal of the project is to predict the manner in which 6 participants performed some exercise as discussed below. Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+The main goal of the project is to predict the manner in which 6 participants did the exercise by using data from accelerometers on the belt, forearm, arm, and dumbell.
+
+## Data Loading and Exploratory Analysis
+
+#### Load packages
+```{r, warning=FALSE, message=FALSE}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(corrplot)
+library(rattle)
+library(corrplot)
+```
+
+
+#### Download and load the data
+```{r}
+#Dowload the data
+trainUrl <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainFile <- "./data/pml-training.csv"
+testFile  <- "./data/pml-testing.csv"
+if (!file.exists("./data")) {
+    dir.create("./data")
+}
+if (!file.exists(trainFile)) {
+    download.file(trainUrl, destfile=trainFile)
+}
+if (!file.exists(testFile)) {
+    download.file(testUrl, destfile=testFile)
+}
+#Load the data
+trainRaw <- read.csv("./data/pml-training.csv")
+testRaw <- read.csv("./data/pml-testing.csv")
+dim(trainRaw)
+dim(testRaw)
+```
+
+#### Data cleaning
+
+```{r}
+# Remove columns with NA missing values.
+trainRaw <- trainRaw[, colSums(is.na(trainRaw)) == 0] 
+testRaw <- testRaw[, colSums(is.na(testRaw)) == 0] 
+
+# Remove columns that do not contribute  to the accelerometer measurements.
+classe <- trainRaw$classe
+trainRemove <- grepl("^X|timestamp|window", names(trainRaw))
+trainRaw <- trainRaw[, !trainRemove]
+trainCleaned <- trainRaw[, sapply(trainRaw, is.numeric)]
+trainCleaned$classe <- classe
+testRemove <- grepl("^X|timestamp|window", names(testRaw))
+testRaw <- testRaw[, !testRemove]
+testCleaned <- testRaw[, sapply(testRaw, is.numeric)]
+```
+
+Finally, divide the cleaned training set into a pure training data set (70%) and a validation data set (30%). The validation data set will be used to conduct cross validation in the next steps.
+```{r}
+inTrain <- createDataPartition(trainCleaned$classe, p=0.70, list=F)
+trainData <- trainCleaned[inTrain, ]
+testData <- trainCleaned[-inTrain, ]
+```
+
+## Prediction Modelling
+
+Three ML algorithms methods will be used: Random Forests, Decision Tree and Generalized Boosted Model. The best algorithm with higher accuracy will then be used with the Test dataset.
+
+#### A) Random forest
+
+The Random Forest algorithm automatically selects the important variables and is robust to correlated covariates & outliers in general. A 5-fold cross validation procedure will be used when employng this algorithm.
+
+```{r}
+set.seed(12345) # For reproducibile purpose
+controlRf <- trainControl(method="cv", 5)
+modelRf <- train(classe ~ ., data=trainData, method="rf", trControl=controlRf, ntree=250)
+modelRf
+```
+
+The performance of the model is evaluated on the validation data set and the confusion matrix and associated statistics are computed:
+```{r}
+predictRf <- predict(modelRf, testData)
+confusionMatrix(testData$classe, predictRf)
+accuracyRf <- postResample(predictRf, testData$classe)
+accuracyRf
+ooseRf <- 1 - as.numeric(confusionMatrix(testData$classe, predictRf)$overall[1])
+ooseRf
+```
+
+#### B) Decision Trees
+
+```{r}
+set.seed(12345)
+modFitDecTree <- rpart(classe ~ ., data=trainData, method="class")
+prp(modFitDecTree)
+```
+
+The performance of the model is evaluated on the validation data set and the confusion matrix and associated statistics are computed:
+```{r}
+predictDecTree <- predict(modFitDecTree, testData, type="class")
+confusionMatrix(testData$classe, predictDecTree)
+accuracyDecTree <- postResample(predictDecTree, testData$classe)
+accuracyDecTree
+ooseDecTree <- 1 - as.numeric(confusionMatrix(testData$classe, predictDecTree)$overall[1])
+ooseDecTree
+```
+
+#### C) Generalized Boosted Model
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(12345)
+controlGBM <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+modFitGBM  <- train(classe ~ ., data=trainData, method = "gbm",
+                    trControl = controlGBM, verbose = FALSE)
+modFitGBM
+```
+
+The performance of the model is evaluated on the validation data set and the confusion matrix and associated statistics are computed:
+```{r}
+predictGBM <- predict(modFitGBM , testData)
+confusionMatrix(testData$classe, predictGBM)
+accuracyGBM <- postResample(predictGBM, testData$classe)
+accuracyGBM
+ooseGBM <- 1 - as.numeric(confusionMatrix(testData$classe, predictGBM)$overall[1])
+ooseGBM
+```
+
+## Apply the best model to the Test data set
+The accuracy of the 3 ML algorithm were:
+
+Random Forest : 0.993
+
+Decision Tree : 0.758
+
+GBM : 0.962
+
+Therefore, we will employ the Random Forest model to the original testing data set downloaded from the data source to predict the 20 quiz results:
+```{r}
+# The problem_id column is removed
+result <- predict(modelRf, testCleaned[, -length(names(testCleaned))])
+result
+```
+
+## Appendix
+
+The correlation matrix between the variables is displayed below.
+A good set of variables should not be highly correlated: given that the computed correlations below are not too high,  PCA (Principal Components Analysis)  pre-processing were not performed.
+
+```{r}
+corrPlot <- cor(trainData[, -length(names(trainData))])
+corrplot(corrPlot, method = "color", type = "lower", 
+         tl.cex = 0.55, tl.col = rgb(0, 0, 0))
+```
+
+Finally, the variable importance across classes in the Random Forest model for the top 20 most important variables is reported below:
+```{r}
+ modelRf <- randomForest(classe ~ ., data=trainData, method="rf", trControl=controlRf, ntree=250)
+varImpPlot(modelRf, sort = TRUE, pch = 19, col = 12, cex = 1, main = "Importance of Predictor Variables in Random Forest Model")
+```
